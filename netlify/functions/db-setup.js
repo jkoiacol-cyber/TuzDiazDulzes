@@ -1,5 +1,13 @@
 const { Pool } = require('pg');
 
+console.log('=== DB-SETUP MODULE LOADING ===');
+console.log('DATABASE_URL from env:', process.env.DATABASE_URL ? 'EXISTS' : 'MISSING');
+
+if (!process.env.DATABASE_URL) {
+  console.error('ERROR: DATABASE_URL is not set!');
+  throw new Error('DATABASE_URL environment variable is required');
+}
+
 // Crear pool de conexiones
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -8,9 +16,22 @@ const pool = new Pool({
   }
 });
 
+// Test básico de conexión
+pool.on('error', (err) => {
+  console.error('Unexpected pool error:', err);
+});
+
+console.log('Pool created successfully');
+
 // Crear tablas si no existen
 async function setupDatabase() {
+  console.log('=== SETUP DATABASE FUNCTION CALLED ===');
+  
   try {
+    // Test de conexión primero
+    await pool.query('SELECT NOW()');
+    console.log('Database connection successful');
+
     // Tabla de usuarios
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -22,12 +43,13 @@ async function setupDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    console.log('Users table ready');
 
     // Tabla de pedidos
     await pool.query(`
       CREATE TABLE IF NOT EXISTS orders (
         id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id),
+        user_id VARCHAR(255),
         user_name VARCHAR(255) NOT NULL,
         user_phone VARCHAR(50) NOT NULL,
         user_address TEXT NOT NULL,
@@ -37,6 +59,7 @@ async function setupDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    console.log('Orders table ready');
 
     // Tabla de estadísticas
     await pool.query(`
@@ -52,10 +75,14 @@ async function setupDatabase() {
         UNIQUE(month, year)
       )
     `);
+    console.log('Statistics table ready');
 
-    console.log('Database tables created successfully');
+    console.log('=== DATABASE SETUP COMPLETE ===');
   } catch (error) {
-    console.error('Error creating tables:', error);
+    console.error('=== DATABASE SETUP ERROR ===');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
+    throw error;
   }
 }
 
