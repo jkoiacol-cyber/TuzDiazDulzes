@@ -60,6 +60,15 @@ export const api = {
     return response.json();
   },
 
+  async adminLogin(password: string) {
+    const response = await fetch(`${API_URL}/admin-auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    return response.json();
+  },
+
   async updateStatistics(data: any) {
     const response = await fetch(`${API_URL}/statistics`, {
       method: 'POST',
@@ -67,5 +76,5 @@ export const api = {
       body: JSON.stringify(data)
     });
     return response.json();
-  }
+  },
 };

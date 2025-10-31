@@ -104,6 +104,9 @@ export default function TuzDiazDulcez() {
   const [statisticsView, setStatisticsView] = useState<"total" | "byUser">(
     "total"
   );
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminTokenExpiry, setAdminTokenExpiry] = useState<number | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Available products con imágenes
   const products = [
@@ -311,6 +314,42 @@ export default function TuzDiazDulcez() {
     // Guardar en localStorage como backup
     localStorage.setItem("statistics", JSON.stringify(statistics));
   }, [statistics, isClient]);
+
+
+  // Verificar si el token es válido
+  useEffect(() => {
+    if (adminToken && adminTokenExpiry) {
+      if (Date.now() > adminTokenExpiry) {
+        // Token expirado
+        setAdminToken(null);
+        setAdminTokenExpiry(null);
+        setIsAdmin(false);
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminTokenExpiry');
+      }
+    }
+  }, [adminToken, adminTokenExpiry]);
+
+  // Cargar token al iniciar
+  useEffect(() => {
+    if (!isClient) return;
+    
+    const savedToken = localStorage.getItem('adminToken');
+    const savedExpiry = localStorage.getItem('adminTokenExpiry');
+    
+    if (savedToken && savedExpiry) {
+      const expiry = parseInt(savedExpiry);
+      if (Date.now() < expiry) {
+        setAdminToken(savedToken);
+        setAdminTokenExpiry(expiry);
+        setIsAdmin(true);
+      } else {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminTokenExpiry');
+      }
+    }
+  }, [isClient]);
+
 
   // Modificar handleRegisterUser para usar API
   const handleRegisterUser = async () => {
@@ -539,13 +578,56 @@ export default function TuzDiazDulcez() {
   };
 
   // Handle admin login
-  const handleAdminLogin = () => {
-    if (adminPasswordInput === adminPassword) {
-      setIsAdmin(true);
-      setAdminLoginAttempt(false);
-      setAdminPasswordInput("");
-    } else {
-      setAdminLoginAttempt(true);
+  const handleAdminLogin = async () => {
+    if (!adminPasswordInput) {
+      alert('Por favor ingresa la contraseña');
+      return;
+    }
+  
+    setIsLoggingIn(true);
+  
+    try {
+      // Intentar autenticar con la API
+      const result = await Promise.race([
+        api.adminLogin(adminPasswordInput),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 5000)
+        )
+      ]) as any;
+    
+      if (result.success && result.token) {
+        // Guardar token
+        const expiry = Date.now() + result.expiresIn;
+        setAdminToken(result.token);
+        setAdminTokenExpiry(expiry);
+        setIsAdmin(true);
+        
+        localStorage.setItem('adminToken', result.token);
+        localStorage.setItem('adminTokenExpiry', expiry.toString());
+        
+        setAdminLoginAttempt(false);
+        setAdminPasswordInput('');
+      } else {
+        alert('Contraseña incorrecta');
+      }
+    } catch (error) {
+      console.log('API no disponible, usando contraseña local (solo desarrollo)');
+      
+      // SOLO PARA DESARROLLO LOCAL
+      if (process.env.NODE_ENV === 'development') {
+        const localPassword = localStorage.getItem('adminPassword') || 'admin123';
+        if (adminPasswordInput === localPassword) {
+          setIsAdmin(true);
+          setAdminLoginAttempt(false);
+          setAdminPasswordInput('');
+        } else {
+          alert('Contraseña incorrecta');
+        }
+      } else {
+        alert('Error de autenticación. Intenta de nuevo.');
+      }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -1098,7 +1180,7 @@ export default function TuzDiazDulcez() {
                         'Realizar Pedido'
                       )}
                     </button>
-                    
+
                     {validationMessage && (
                       <div
                         className={`p-3 rounded-lg text-sm font-semibold text-center ${
