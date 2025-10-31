@@ -76,11 +76,13 @@ export default function TuzDiazDulcez() {
   const [address, setAddress] = useState("");
   const [registrationMessage, setRegistrationMessage] = useState("");
   const [showRegistrationPopup, setShowRegistrationPopup] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   // Cart State
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [validationPhone, setValidationPhone] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [animatedProductId, setAnimatedProductId] = useState<string | null>(
     null
   );
@@ -275,7 +277,7 @@ export default function TuzDiazDulcez() {
     if (savedAdminPassword) {
       setAdminPassword(savedAdminPassword);
     } else {
-      const defaultPassword = "Juan53@";
+      const defaultPassword = "admin123";
       localStorage.setItem("adminPassword", defaultPassword);
       setAdminPassword(defaultPassword);
     }
@@ -331,24 +333,32 @@ export default function TuzDiazDulcez() {
       createdAt: new Date().toISOString(),
     };
 
-    try {
-      // Intentar guardar en la API
-      await api.createUser(newUser);
-      // Recargar usuarios desde la API
-      const updatedUsers = await api.getUsers();
-      setUsers(updatedUsers);
-    } catch (error) {
-      console.error('Error saving to API, using local storage:', error);
-      // Si falla, guardar localmente
-      setUsers([...users, newUser]);
-    }
+      setIsRegistering(true); // ← AGREGAR
 
-    setShowRegistrationPopup(true);
-    setRegistrationMessage("");
-    setFullName("");
-    setPhone("");
-    setAddress("");
-  };
+      try {
+        // Intentar guardar en la API (si está disponible)
+        await Promise.race([
+          api.createUser(newUser),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 3000)
+          )
+        ]);
+        const updatedUsers = await api.getUsers();
+        setUsers(updatedUsers);
+      } catch (error) {
+        console.log('API no disponible, usando localStorage');
+        // Si falla o tarda mucho, guardar localmente
+        setUsers([...users, newUser]);
+      } finally {
+        setIsRegistering(false); // ← AGREGAR
+      }
+
+      setShowRegistrationPopup(true);
+      setRegistrationMessage("");
+      setFullName("");
+      setPhone("");
+      setAddress("");
+  };    
 
   // Modificar approveUser para usar API
   const approveUser = async (userId: string) => {
@@ -387,6 +397,8 @@ export default function TuzDiazDulcez() {
       return;
     }
 
+    setIsPlacingOrder(true); // ← AGREGAR
+
     const totalPrice = cartItems.reduce(
       (sum, item) => sum + item.price * item.quantity,
       0
@@ -404,19 +416,21 @@ export default function TuzDiazDulcez() {
     };
 
     try {
-      // Intentar guardar en la API
-      await api.createOrder(newOrder);
-      // Recargar pedidos desde la API
+      await Promise.race([
+        api.createOrder(newOrder),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 3000)
+        )
+      ]);
       const updatedOrders = await api.getOrders();
       setOrders(updatedOrders);
-      
-      // Actualizar estadísticas
       await updateStatisticsAPI(cartItems, totalPrice, user);
     } catch (error) {
-      console.error('Error saving to API, using local storage:', error);
-      // Si falla, guardar localmente
+      console.log('API no disponible, usando localStorage');
       setOrders([...orders, newOrder]);
       updateStatistics(cartItems, totalPrice, user);
+    } finally {
+      setIsPlacingOrder(false); // ← AGREGAR
     }
 
     setCartItems([]);
@@ -742,9 +756,7 @@ export default function TuzDiazDulcez() {
         {adminLoginAttempt && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-md w-full">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6">
-                Acceso Administrativo
-              </h2>
+              <h2 className="text-2xl font-bold text-gray-800 mb-6">Acceso Administrativo</h2>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -753,8 +765,8 @@ export default function TuzDiazDulcez() {
                   <input
                     type="password"
                     value={adminPasswordInput}
-                    onChange={(e) => setAdminPasswordInput(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleAdminLogin()}
+                    onChange={e => setAdminPasswordInput(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && handleAdminLogin()}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
                     placeholder="••••••••"
                     autoFocus
@@ -763,18 +775,35 @@ export default function TuzDiazDulcez() {
                 <div className="flex gap-3">
                   <button
                     onClick={handleAdminLogin}
-                    className="flex-1 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition"
+                    className="flex-1 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition active:scale-95"
                   >
                     Ingresar
                   </button>
                   <button
                     onClick={() => {
                       setAdminLoginAttempt(false);
-                      setAdminPasswordInput("");
+                      setAdminPasswordInput('');
                     }}
-                    className="flex-1 bg-gray-300 text-gray-800 font-bold py-3 rounded-lg hover:bg-gray-400 transition"
+                    className="flex-1 bg-gray-300 text-gray-800 font-bold py-3 rounded-lg hover:bg-gray-400 transition active:scale-95"
                   >
                     Cancelar
+                  </button>
+                </div>
+                
+                {/* AGREGAR ESTA SECCIÓN */}
+                <div className="border-t pt-4">
+                  <button
+                    onClick={() => {
+                      const newPassword = prompt('Nueva contraseña de administrador:');
+                      if (newPassword && newPassword.trim()) {
+                        localStorage.setItem('adminPassword', newPassword);
+                        setAdminPassword(newPassword);
+                        alert('Contraseña actualizada correctamente');
+                      }
+                    }}
+                    className="w-full text-sm text-gray-600 hover:text-purple-600 transition"
+                  >
+                    ¿Olvidaste tu contraseña? Click aquí
                   </button>
                 </div>
               </div>
@@ -956,7 +985,7 @@ export default function TuzDiazDulcez() {
                         </p>
                         <button
                           onClick={() => addToCart(product)}
-                          className="w-full bg-purple-600 text-white font-semibold py-2 rounded-lg hover:bg-purple-700 transition"
+                          className="w-full bg-purple-600 text-white font-semibold py-2 rounded-lg hover:bg-purple-700 transition active:scale-95"
                         >
                           Agregar al Carrito
                         </button>
@@ -1052,11 +1081,24 @@ export default function TuzDiazDulcez() {
                     />
                     <button
                       onClick={handlePlaceOrder}
-                      className="w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition disabled:opacity-50"
-                      disabled={cartItems.length === 0}
+                      disabled={cartItems.length === 0 || isPlacingOrder}
+                      className={`w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition disabled:opacity-50 active:scale-95 ${
+                        isPlacingOrder ? 'cursor-wait' : ''
+                      }`}
                     >
-                      Realizar Pedido
+                      {isPlacingOrder ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Procesando...
+                        </span>
+                      ) : (
+                        'Realizar Pedido'
+                      )}
                     </button>
+                    
                     {validationMessage && (
                       <div
                         className={`p-3 rounded-lg text-sm font-semibold text-center ${
@@ -1120,9 +1162,22 @@ export default function TuzDiazDulcez() {
                   </div>
                   <button
                     onClick={handleRegisterUser}
-                    className="w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition mt-6"
+                    disabled={isRegistering}
+                    className={`w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition mt-6 ${
+                      isRegistering ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
                   >
-                    Registrarse
+                    {isRegistering ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Registrando...
+                      </span>
+                    ) : (
+                      'Registrarse'
+                    )}
                   </button>
                   {registrationMessage && (
                     <div
