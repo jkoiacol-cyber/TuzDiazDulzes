@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Production
+dist/
+dist-ssr/
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Netlify
+.netlify/
+
+# Logs
+*.log
+npm-debug.log*
