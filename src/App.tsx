@@ -535,35 +535,6 @@ export default function TuzDiazDulcez() {
     }
   };
 
-  // Register user with popup
-  const handleRegisterUser = () => {
-    if (!fullName || !phone || !address) {
-      setRegistrationMessage("Por favor completa todos los campos");
-      return;
-    }
-
-    if (users.some((u) => u.phone === phone)) {
-      setRegistrationMessage("Este teléfono ya está registrado");
-      return;
-    }
-
-    const newUser: User = {
-      id: Date.now().toString(),
-      fullName,
-      phone,
-      address,
-      approved: false,
-      createdAt: new Date().toISOString(),
-    };
-
-    setUsers([...users, newUser]);
-    setShowRegistrationPopup(true);
-    setRegistrationMessage("");
-    setFullName("");
-    setPhone("");
-    setAddress("");
-  };
-
   // Add item to cart with animation
   const addToCart = (product: (typeof products)[0]) => {
     const existingItem = cartItems.find((item) => item.id === product.id);
@@ -613,79 +584,6 @@ export default function TuzDiazDulcez() {
         )
       );
     }
-  };
-
-// Track user orders
-const trackUserOrders = () => {
-  if (!userOrdersPhone) {
-    alert('Por favor ingresa tu número de teléfono');
-    return;
-  }
-
-  // Obtener fecha de hace 12 meses
-  const twelveMonthsAgo = new Date();
-  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
-
-  const userOrdersList = orders.filter(o => {
-    const orderDate = new Date(o.createdAt);
-    // Incluir todos los pedidos NO archivados Y los archivados de los últimos 12 meses
-    return o.userPhone === userOrdersPhone && 
-           (o.status !== 'archived' || 
-            (o.status === 'archived' && orderDate >= twelveMonthsAgo));
-  });
-
-  if (userOrdersList.length === 0) {
-    alert('No se encontraron pedidos con este número');
-    return;
-  }
-
-  // Ordenar por fecha, más recientes primero
-  userOrdersList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  setUserOrders(userOrdersList);
-  setShowOrderTracking(true);
-};
-
-  // Validate and place order
-  const handlePlaceOrder = () => {
-    if (!validationPhone) {
-      setValidationMessage("Por favor ingresa tu teléfono");
-      return;
-    }
-
-    const user = users.find((u) => u.phone === validationPhone && u.approved);
-    if (!user) {
-      setValidationMessage("Usuario no encontrado o no aprobado");
-      return;
-    }
-
-    if (cartItems.length === 0) {
-      setValidationMessage("El carrito está vacío");
-      return;
-    }
-
-    const totalPrice = cartItems.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0
-    );
-    const newOrder: Order = {
-      id: Date.now().toString(),
-      userId: user.id,
-      userName: user.fullName,
-      userPhone: user.phone,
-      userAddress: user.address,
-      items: cartItems,
-      totalPrice,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-
-    setOrders([...orders, newOrder]);
-    updateStatistics(cartItems, totalPrice, user);
-    setCartItems([]);
-    setValidationPhone("");
-    setValidationMessage("¡Pedido realizado exitosamente!");
-    setShowCartBanner(false);
   };
 
   // Update statistics with user info
@@ -742,18 +640,6 @@ const trackUserOrders = () => {
       };
       setStatistics([...statistics, newStat]);
     }
-  };
-
-  // Approve user
-  const approveUser = (userId: string) => {
-    setUsers(
-      users.map((u) => (u.id === userId ? { ...u, approved: true } : u))
-    );
-  };
-
-  // Update order status
-  const updateOrderStatus = (orderId: string, status: Order["status"]) => {
-    setOrders(orders.map((o) => (o.id === orderId ? { ...o, status } : o)));
   };
 
   // Export statistics to Excel
