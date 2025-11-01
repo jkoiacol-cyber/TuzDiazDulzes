@@ -49,7 +49,7 @@ exports.handler = async (event, context) => {
         const totalOrders = parseInt(stat.total_orders);
 
         const ordersQuery = await pool.query(
-          `SELECT items, total_price FROM orders 
+          `SELECT items, total_price, user_name FROM orders 
            WHERE EXTRACT(MONTH FROM created_at) = $1 
            AND EXTRACT(YEAR FROM created_at) = $2`,
           [periodMonth, periodYear]
@@ -61,10 +61,14 @@ exports.handler = async (event, context) => {
 
         ordersQuery.rows.forEach(order => {
           const items = order.items;
+          const customer = order.user_name || 'N/A';
           totalPrice += parseFloat(order.total_price);
           items.forEach(item => {
             totalUnits += item.quantity;
-            allItems.push(item);
+            allItems.push({
+              ...item,
+              customer
+            });
           });
         });
 
