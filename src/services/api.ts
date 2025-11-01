@@ -55,8 +55,8 @@ export const api = {
   },
 
   // Statistics
-  async getStatistics() {
-    const response = await fetch(`${API_URL}/statistics`);
+  async getStatistics(month: number, year: number) {
+    const response = await fetch(`${API_URL}/statistics?month=${month}&year=${year}`);
     return response.json();
   },
 

@@ -231,11 +231,15 @@ export default function TuzDiazDulcez() {
     const loadData = async () => {
       try {
         // Intentar cargar desde API
-        const [usersData, ordersData, statsData] = await Promise.all([
+        const [usersData, ordersData] = await Promise.all([
           api.getUsers().catch(() => null),
-          api.getOrders().catch(() => null),
-          api.getStatistics().catch(() => null)
+          api.getOrders().catch(() => null)
         ]);
+        
+        // Cargar estadísticas por separado, enviando mes y año
+        const currentMonth = new Date().getMonth() + 1;
+        const currentYear = new Date().getFullYear();
+        const statsData = await api.getStatistics(currentMonth, currentYear).catch(() => null);
 
         // Si la API funciona, usar esos datos
         if (usersData) {

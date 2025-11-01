@@ -1,12 +1,10 @@
 const { pool, setupDatabase } = require('./db-setup');
 
 exports.handler = async (event, context) => {
-  console.log('=== STATISTICS FUNCTION STARTED ===');
-
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE'
+    'Access-Control-Allow-Methods': 'GET, POST'
   };
 
   if (event.httpMethod === 'OPTIONS') {
@@ -15,87 +13,87 @@ exports.handler = async (event, context) => {
 
   try {
     await setupDatabase();
-    const method = event.httpMethod;
-    console.log('Method:', method);
-
-    if (method === 'GET') {
+    
+    // GET - Calcular estadísticas en tiempo real
+    if (event.httpMethod === 'GET') {
       const { month, year } = event.queryStringParameters || {};
-
-      let query = `
-        SELECT 
-          EXTRACT(MONTH FROM created_at) as month,
-          EXTRACT(YEAR FROM created_at) as year,
-          COUNT(*) as total_orders
-        FROM orders `;
-
-      const params = [];
-
-      if (month && year) {
-        query += 'WHERE EXTRACT(MONTH FROM created_at) = $1 AND EXTRACT(YEAR FROM created_at) = $2';
-        params.push(month, year);
-        query += ' GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at)';
-      } else {
-        query += 'GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at) ORDER BY year DESC, month DESC';
+      
+      if (!month || !year) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Month and year are required' })
+        };
       }
-
-      const result = await pool.query(query, params);
-      console.log('Periods found:', result.rows.length);
-
-      const statistics = [];
-
-      for (const stat of result.rows) {
-        const periodMonth = stat.month;
-        const periodYear = stat.year;
-        const totalOrders = parseInt(stat.total_orders);
-
-        const ordersQuery = await pool.query(
-          `SELECT items, total_price, user_name FROM orders 
-           WHERE EXTRACT(MONTH FROM created_at) = $1 
-           AND EXTRACT(YEAR FROM created_at) = $2`,
-          [periodMonth, periodYear]
-        );
-
-        let totalUnits = 0;
-        let totalPrice = 0;
-        let allItems = [];
-
-        ordersQuery.rows.forEach(order => {
-          const items = order.items;
-          const customer = order.user_name || 'N/A';
-          totalPrice += parseFloat(order.total_price);
-          items.forEach(item => {
-            totalUnits += item.quantity;
+      
+      const ordersQuery = await pool.query(
+        `SELECT items, total_price FROM orders 
+         WHERE EXTRACT(MONTH FROM created_at) = $1 
+         AND EXTRACT(YEAR FROM created_at) = $2`,
+        [month, year]
+      );
+      
+      if (ordersQuery.rows.length === 0) {
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify([])
+        };
+      }
+      
+      // Calcular totales
+      let totalOrders = ordersQuery.rows.length;
+      let totalUnits = 0;
+      let totalPrice = 0;
+      let allItems = [];
+      
+      ordersQuery.rows.forEach(order => {
+        const items = order.items;
+        totalPrice += parseFloat(order.total_price);
+        
+        items.forEach(item => {
+          totalUnits += item.quantity;
+          
+          // Buscar si el item ya existe en allItems para agruparlo
+          const existingItem = allItems.find(i => i.name === item.name);
+          if (existingItem) {
+            existingItem.quantity += item.quantity;
+            existingItem.price += item.price * item.quantity;
+          } else {
             allItems.push({
-              ...item,
-              customer
+              name: item.name,
+              quantity: item.quantity,
+              price: item.price * item.quantity
             });
-          });
+          }
         });
-
-        statistics.push({
-          id: `${periodYear}-${periodMonth}`,
-          month: parseInt(periodMonth),
-          year: parseInt(periodYear),
-          totalOrders,
-          totalUnits,
-          totalPrice,
-          items: allItems
-        });
-      }
-
+      });
+      
+      const statistics = [{
+        id: `${year}-${month}`,
+        month: parseInt(month),
+        year: parseInt(year),
+        totalOrders,
+        totalUnits,
+        totalPrice,
+        items: allItems
+      }];
+      
+      console.log('Calculated statistics:', statistics[0]);
+      
       return {
         statusCode: 200,
         headers,
         body: JSON.stringify(statistics)
       };
     }
-
-    if (method === 'POST') {
-      console.log('Statistics POST received (no-op in real-time mode)');
+    
+    // POST - Ya no hace nada, se calcula en GET
+    if (event.httpMethod === 'POST') {
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ message: 'Statistics calculated in real-time' })
+        body: JSON.stringify({ message: 'Statistics are now calculated in real-time' })
       };
     }
 
@@ -106,9 +104,7 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('=== STATISTICS ERROR ===');
-    console.error('Message:', error.message);
-    console.error('Stack:', error.stack);
+    console.error('=== STATISTICS ERROR ===', error.message);
     return {
       statusCode: 500,
       headers,
