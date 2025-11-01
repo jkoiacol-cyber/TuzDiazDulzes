@@ -27,7 +27,6 @@ exports.handler = async (event, context) => {
           EXTRACT(MONTH FROM created_at) as month,
           EXTRACT(YEAR FROM created_at) as year,
           COUNT(*) as total_orders,
-          items
         FROM orders
       `;
       const params = [];
