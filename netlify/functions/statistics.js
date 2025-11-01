@@ -18,38 +18,92 @@ exports.handler = async (event, context) => {
     const method = event.httpMethod;
     console.log('Method:', method);
     
-    // GET - Obtener estadísticas
+    // GET - Calcular estadísticas desde pedidos en tiempo real
     if (method === 'GET') {
       const { month, year } = event.queryStringParameters || {};
       
-      let query = 'SELECT * FROM statistics';
+      let query = `
+        SELECT 
+          EXTRACT(MONTH FROM created_at) as month,
+          EXTRACT(YEAR FROM created_at) as year,
+          COUNT(*) as total_orders,
+          items
+        FROM orders
+      `;
       const params = [];
       
       if (month && year) {
-        query += ' WHERE month = $1 AND year = $2';
+        query += ' WHERE EXTRACT(MONTH FROM created_at) = $1 AND EXTRACT(YEAR FROM created_at) = $2';
         params.push(month, year);
+        query += ' GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at)';
+      } else {
+        query += ' GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at) ORDER BY year DESC, month DESC';
       }
       
-      query += ' ORDER BY year DESC, month DESC';
-      
       const result = await pool.query(query, params);
-      console.log('Statistics found:', result.rows.length);
+      console.log('Periods found:', result.rows.length);
       
-      // ← MAPEO CRÍTICO: Convertir snake_case a camelCase
-      const statistics = result.rows.map(stat => {
-        const mapped = {
-          id: stat.id,
-          month: stat.month,
-          year: stat.year,
-          totalOrders: stat.total_orders,      // ← AGREGAR ESTE MAPEO
-          totalUnits: stat.total_units,        // ← AGREGAR ESTE MAPEO
-          totalPrice: parseFloat(stat.total_price), // ← AGREGAR ESTE MAPEO
-          items: stat.items,
-          createdAt: stat.created_at
+      // Si se solicita un mes/año específico, calcular desde TODOS los pedidos de ese período
+      if (month && year) {
+        const ordersQuery = await pool.query(
+          `SELECT items, total_price FROM orders 
+           WHERE EXTRACT(MONTH FROM created_at) = $1 
+           AND EXTRACT(YEAR FROM created_at) = $2`,
+          [month, year]
+        );
+        
+        if (ordersQuery.rows.length === 0) {
+          return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify([])
+          };
+        }
+        
+        // Calcular totales
+        let totalOrders = ordersQuery.rows.length;
+        let totalUnits = 0;
+        let totalPrice = 0;
+        let allItems = [];
+        
+        ordersQuery.rows.forEach(order => {
+          const items = order.items;
+          totalPrice += parseFloat(order.total_price);
+          items.forEach(item => {
+            totalUnits += item.quantity;
+            allItems.push(item);
+          });
+        });
+        
+        const statistics = [{
+          id: 1,
+          month: parseInt(month),
+          year: parseInt(year),
+          totalOrders,
+          totalUnits,
+          totalPrice,
+          items: allItems
+        }];
+        
+        console.log('Calculated statistics:', statistics[0]);
+        
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify(statistics)
         };
-        console.log('Mapped statistic:', JSON.stringify(mapped)); // ← Ver en logs
-        return mapped;
-      });
+      }
+      
+      // Para listado general, usar la tabla de estadísticas
+      const statistics = result.rows.map(stat => ({
+        id: `${stat.year}-${stat.month}`,
+        month: parseInt(stat.month),
+        year: parseInt(stat.year),
+        totalOrders: parseInt(stat.total_orders),
+        totalUnits: 0, // Se calculará si se necesita
+        totalPrice: 0,  // Se calculará si se necesita
+        items: []
+      }));
       
       return {
         statusCode: 200,
@@ -58,79 +112,13 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // POST - Crear o actualizar estadísticas
+    // POST - Ya no es necesario guardar estadísticas, solo retornar OK
     if (method === 'POST') {
-      const { month, year, totalOrders, totalUnits, totalPrice, items } = JSON.parse(event.body);
-      
-      console.log('Updating statistics:', { 
-        month, 
-        year, 
-        totalOrders, 
-        totalUnits, 
-        totalPrice: parseFloat(totalPrice) 
-      });
-      
-      const priceAsNumber = parseFloat(totalPrice);
-      
-      // Intentar actualizar primero
-      const updateResult = await pool.query(
-        `UPDATE statistics 
-         SET total_orders = total_orders + $3,
-             total_units = total_units + $4,
-             total_price = total_price + $5,
-             items = items || $6::jsonb
-         WHERE month = $1 AND year = $2
-         RETURNING *`,
-        [month, year, totalOrders, totalUnits, priceAsNumber, JSON.stringify(items)]
-      );
-      
-      if (updateResult.rowCount > 0) {
-        console.log('Statistics updated');
-        
-        // ← MAPEO EN LA RESPUESTA DEL UPDATE
-        const updated = {
-          id: updateResult.rows[0].id,
-          month: updateResult.rows[0].month,
-          year: updateResult.rows[0].year,
-          totalOrders: updateResult.rows[0].total_orders,
-          totalUnits: updateResult.rows[0].total_units,
-          totalPrice: parseFloat(updateResult.rows[0].total_price),
-          items: updateResult.rows[0].items,
-          createdAt: updateResult.rows[0].created_at
-        };
-        
-        return {
-          statusCode: 200,
-          headers,
-          body: JSON.stringify(updated)
-        };
-      }
-      
-      // Si no existe, crear nuevo
-      const insertResult = await pool.query(
-        `INSERT INTO statistics (month, year, total_orders, total_units, total_price, items) 
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [month, year, totalOrders, totalUnits, priceAsNumber, JSON.stringify(items)]
-      );
-      
-      console.log('Statistics created');
-      
-      // ← MAPEO EN LA RESPUESTA DEL INSERT
-      const created = {
-        id: insertResult.rows[0].id,
-        month: insertResult.rows[0].month,
-        year: insertResult.rows[0].year,
-        totalOrders: insertResult.rows[0].total_orders,
-        totalUnits: insertResult.rows[0].total_units,
-        totalPrice: parseFloat(insertResult.rows[0].total_price),
-        items: insertResult.rows[0].items,
-        createdAt: insertResult.rows[0].created_at
-      };
-      
+      console.log('Statistics POST received (no-op in real-time mode)');
       return {
-        statusCode: 201,
+        statusCode: 200,
         headers,
-        body: JSON.stringify(created)
+        body: JSON.stringify({ message: 'Statistics calculated in real-time' })
       };
     }
 
