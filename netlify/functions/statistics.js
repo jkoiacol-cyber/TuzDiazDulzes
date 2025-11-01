@@ -27,17 +27,16 @@ exports.handler = async (event, context) => {
           EXTRACT(MONTH FROM created_at) as month,
           EXTRACT(YEAR FROM created_at) as year,
           COUNT(*) as total_orders
-        FROM orders
+        FROM orders `;
 
-      `;
       const params = [];
       
       if (month && year) {
-        query += ' WHERE EXTRACT(MONTH FROM created_at) = $1 AND EXTRACT(YEAR FROM created_at) = $2';
+        query += 'WHERE EXTRACT(MONTH FROM created_at) = $1 AND EXTRACT(YEAR FROM created_at) = $2';
         params.push(month, year);
         query += ' GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at)';
       } else {
-        query += ' GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at) ORDER BY year DESC, month DESC';
+        query += 'GROUP BY EXTRACT(MONTH FROM created_at), EXTRACT(YEAR FROM created_at) ORDER BY year DESC, month DESC';
       }
       
       const result = await pool.query(query, params);
