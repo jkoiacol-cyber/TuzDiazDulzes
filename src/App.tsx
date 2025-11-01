@@ -9,6 +9,7 @@ interface User {
   address: string;
   approved: boolean;
   createdAt: string;
+  status?: 'pending' | 'approved' | 'rejected';
 }
 
 interface OrderItem {
@@ -62,6 +63,8 @@ export default function TuzDiazDulcez() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [adminPasswordInput, setAdminPasswordInput] = useState("");
+  const [adminSecurityMsg, setAdminSecurityMsg] = useState('');
+  const [isRotatingPassword, setIsRotatingPassword] = useState(false);
   const [adminLoginAttempt, setAdminLoginAttempt] = useState(false);
   const [currentTab, setCurrentTab] = useState<"cart" | "register" | "orders">(
     "cart"
@@ -427,8 +430,9 @@ export default function TuzDiazDulcez() {
       return;
     }
 
-    const user = users.find(
-      (u) => u.phone === validationPhone && u.approved
+    const user = users.find(u =>
+      u.phone === validationPhone &&
+      ((u.status && u.status === 'approved') || (!u.status && u.approved))      
     );
     if (!user) {
       setValidationMessage("Usuario no encontrado o no aprobado");
@@ -683,6 +687,65 @@ export default function TuzDiazDulcez() {
           item.id === productId ? { ...item, quantity } : item
         )
       );
+    }
+  };
+
+  // Update user status (approved / rejected / pending)
+  const updateUserStatusFrontend = async (
+    userId: string,
+    status: 'approved' | 'rejected' | 'pending'
+  ) => {
+    try {
+      await api.updateUserStatus(userId, status);
+      const refreshed = await api.getUsers();
+      setUsers(refreshed);
+    } catch (e) {
+      console.error('Error updating user status:', e);
+      alert('No se pudo actualizar el estado del usuario');
+    }
+  };
+
+  // Delete user (only user or user + all orders)
+  const deleteUserFrontend = async (userId: string, cascade: boolean) => {
+    const ok = confirm(
+      cascade
+        ? '¿Borrar usuario y TODOS sus pedidos? Esta acción no se puede deshacer.'
+        : '¿Borrar solo el usuario? Los pedidos quedarán tal cual.'
+    );
+    if (!ok) return;
+
+    try {
+      await api.deleteUser(userId, cascade);
+      const refreshed = await api.getUsers();
+      setUsers(refreshed);
+    } catch (e) {
+      console.error('Error deleting user:', e);
+      alert('No se pudo borrar el usuario');
+    }
+  };
+
+  // Rotate admin password (server generates and emails it)
+  const rotatePassword = async () => {
+    setAdminSecurityMsg('');
+    if (!adminPasswordInput) {
+      setAdminSecurityMsg('Ingresa tu contraseña actual para confirmar');
+      return;
+    }
+
+    setIsRotatingPassword(true);
+    try {
+      const res = await api.rotateAdminPassword(adminPasswordInput);
+      if (res?.success) {
+        setAdminSecurityMsg('Nueva contraseña generada y enviada por email.');
+        setAdminPasswordInput('');
+      } else {
+        setAdminSecurityMsg('Error: ' + (res?.error || 'No se pudo rotar la contraseña'));
+      }
+    } catch (e: any) {
+      console.error('Error rotating password:', e);
+      setAdminSecurityMsg('Error rotando contraseña');
+    } finally {
+      setIsRotatingPassword(false);
     }
   };
 
@@ -1593,6 +1656,8 @@ export default function TuzDiazDulcez() {
               <h2 className="text-2xl md:text-3xl font-bold text-gray-800 mb-6">
                 Gestión de Usuarios
               </h2>
+        
+              {/* Tabla de usuarios */}
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-100 border-b-2 border-gray-300">
@@ -1617,10 +1682,7 @@ export default function TuzDiazDulcez() {
                   <tbody>
                     {users.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={5}
-                          className="px-4 py-8 text-center text-gray-500"
-                        >
+                        <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
                           No hay usuarios registrados
                         </td>
                       </tr>
@@ -1630,35 +1692,86 @@ export default function TuzDiazDulcez() {
                           key={user.id}
                           className="border-b hover:bg-gray-50 transition"
                         >
+                          {/* Nombre */}
                           <td className="px-4 py-4 font-semibold text-gray-800">
-                            {user.fullName}
+                            {user.fullName || (user as any).full_name || '—'}
                           </td>
+        
+                          {/* Teléfono */}
                           <td className="px-4 py-4 text-gray-700">
                             {user.phone}
                           </td>
+        
+                          {/* Dirección */}
                           <td className="px-4 py-4 text-gray-700">
                             {user.address}
                           </td>
+        
+                          {/* Estado (compatible con approved antiguo y status nuevo) */}
                           <td className="px-4 py-4">
                             <span
                               className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                user.approved
-                                  ? "bg-green-100 text-green-800"
-                                  : "bg-yellow-100 text-yellow-800"
+                                (user.status === 'approved' || user.approved)
+                                  ? 'bg-green-100 text-green-800'
+                                  : user.status === 'rejected'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-yellow-100 text-yellow-800'
                               }`}
                             >
-                              {user.approved ? "✓ Aprobado" : "⏳ Pendiente"}
+                              {(user.status === 'approved' || user.approved)
+                                ? '✓ Aprobado'
+                                : user.status === 'rejected'
+                                ? '✗ Rechazado'
+                                : '⏳ Pendiente'}
                             </span>
                           </td>
+        
+                          {/* Acciones: Aprobar / Rechazar / Borrar */}
                           <td className="px-4 py-4 text-center">
-                            {!user.approved && (
-                              <button
-                                onClick={() => approveUser(user.id)}
-                                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold text-sm"
-                              >
-                                Aprobar
-                              </button>
-                            )}
+                            <div className="flex items-center justify-center gap-2">
+                              {/* Aprobar */}
+                              {(user.status !== 'approved' && !user.approved) && (
+                                <button
+                                  onClick={() => updateUserStatusFrontend(user.id, 'approved')}
+                                  className="bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition text-sm"
+                                >
+                                  Aprobar
+                                </button>
+                              )}
+        
+                              {/* Rechazar */}
+                              {user.status !== 'rejected' && (
+                                <button
+                                  onClick={() => updateUserStatusFrontend(user.id, 'rejected')}
+                                  className="bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 transition text-sm"
+                                >
+                                  Rechazar
+                                </button>
+                              )}
+        
+                              {/* Borrar */}
+                              <div className="relative inline-block">
+                                <details>
+                                  <summary className="bg-gray-600 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition text-sm        cursor-pointer list-none">
+                                    Borrar
+                                  </summary>
+                                  <div className="absolute right-0 mt-2 w-60 bg-white border rounded shadow text-left z-10">
+                                    <button
+                                      onClick={() => deleteUserFrontend(user.id, false)}
+                                      className="block w-full px-4 py-2 hover:bg-gray-50 text-sm"
+                                    >
+                                      Borrar solo usuario
+                                    </button>
+                                    <button
+                                      onClick={() => deleteUserFrontend(user.id, true)}
+                                      className="block w-full px-4 py-2 hover:bg-gray-50 text-sm text-red-600"
+                                    >
+                                      Borrar usuario y sus pedidos
+                                    </button>
+                                  </div>
+                                </details>
+                              </div>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1666,146 +1779,143 @@ export default function TuzDiazDulcez() {
                   </tbody>
                 </table>
               </div>
+        
+              {/* Seguridad: rotar contraseña del administrador */}
+              <div className="mt-6 bg-white rounded-xl shadow-lg p-6">
+                <h3 className="font-bold text-lg mb-2">Seguridad</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Genera una nueva contraseña de administrador (se enviará por email al administrador y al desarrollador).
+                </p>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="password"
+                    placeholder="Contraseña actual"
+                    value={adminPasswordInput}
+                    onChange={e => setAdminPasswordInput(e.target.value)}
+                    className="border rounded px-3 py-2 flex-1"
+                  />
+                  <button
+                    onClick={rotatePassword}
+                    disabled={isRotatingPassword}
+                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition disabled:opacity-60"
+                  >
+                    {isRotatingPassword ? 'Rotando...' : 'Rotar'}
+                  </button>
+                </div>
+                {adminSecurityMsg && (
+                  <p className="text-sm mt-3">
+                    {adminSecurityMsg}
+                  </p>
+                )}
+              </div>
+        
             </div>
           </div>
         )}
 
         {/* Orders Tab */}
-        {adminTab === "orders" && (
+        {adminTab === 'orders' && (
           <div className="space-y-6">
-            {["pending", "processing", "completed", "archived"].map(
-              (status) => (
-                <div
-                  key={status}
-                  className="bg-white rounded-xl shadow-lg overflow-hidden"
-                >
-                  <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 md:p-6">
-                    <h3 className="text-lg md:text-xl font-bold capitalize">
-                      {status === "pending" && "⏳ Pedidos Pendientes"}
-                      {status === "processing" && "🔄 En Preparación"}
-                      {status === "completed" && "✅ Completados"}
-                      {status === "archived" && "📦 Archivados"}
-                    </h3>
-                  </div>
-                  <div className="p-4 md:p-6">
-                    {orders.filter((o) => o.status === status).length === 0 ? (
-                      <p className="text-gray-500 text-center py-8">
-                        No hay pedidos en este estado
-                      </p>
-                    ) : (
-                      <div className="space-y-4">
-                        {orders
-                          .filter((o) => o.status === status)
-                          .map((order) => (
-                            <div
-                              key={order.id}
-                              className="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition"
-                            >
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                <div>
-                                  <p className="text-xs text-gray-600 font-semibold">
-                                    CLIENTE
-                                  </p>
-                                  <p className="font-bold text-gray-800">
-                                    {order.userName}
-                                  </p>
-                                  <p className="text-sm text-gray-700">
-                                    {order.userPhone}
-                                  </p>
-                                  <p className="text-sm text-gray-700">
-                                    {order.userAddress}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-gray-600 font-semibold">
-                                    DETALLES
-                                  </p>
-                                  <p className="text-sm text-gray-700">
-                                    <span className="font-semibold">
-                                      Pedido ID:
-                                    </span>{" "}
-                                    {order.id}
-                                  </p>
-                                  <p className="text-sm text-gray-700">
-                                    <span className="font-semibold">
-                                      Fecha:
-                                    </span>{" "}
-                                    {new Date(
-                                      order.createdAt
-                                    ).toLocaleDateString("es-CO")}
-                                  </p>
-                                </div>
+            {['pending', 'processing', 'completed', 'archived'].map((status) => (
+              <div key={status} className="bg-white rounded-xl shadow-lg overflow-hidden">
+                <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 md:p-6">
+                  <h3 className="text-lg md:text-xl font-bold capitalize">
+                    {status === 'pending' && '⏳ Pedidos Pendientes'}
+                    {status === 'processing' && '🔄 En Preparación'}
+                    {status === 'completed' && '✅ Completados'}
+                    {status === 'archived' && '📦 Archivados'}
+                  </h3>
+                </div>
+        
+                <div className="p-4 md:p-6">
+                  {orders.filter((o) => o.status === status).length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">No hay pedidos en este estado</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {orders
+                        .filter((o) => o.status === status)
+                        .map((order) => (
+                          <div
+                            key={order.id}
+                            className="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition"
+                          >
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                              <div>
+                                <p className="text-xs text-gray-600 font-semibold">CLIENTE</p>
+                                <p className="font-bold text-gray-800">{order.userName}</p>
+                                <p className="text-sm text-gray-700">{order.userPhone}</p>
+                                <p className="text-sm text-gray-700">{order.userAddress}</p>
                               </div>
-
-                              <div className="bg-gray-50 rounded-lg p-3 mb-4">
-                                <p className="text-xs text-gray-600 font-semibold mb-2">
-                                  ARTÍCULOS
+                              <div>
+                                <p className="text-xs text-gray-600 font-semibold">DETALLES</p>
+                                <p className="text-sm text-gray-700">
+                                  <span className="font-semibold">Pedido ID:</span> {order.id}
                                 </p>
-                                <div className="space-y-1">
-                                  {order.items.map((item, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="flex justify-between text-sm text-gray-700"
-                                    >
-                                      <span>
-                                        {item.name} x{item.quantity}
-                                      </span>
-                                      <span className="font-semibold">
-                                        {formatCurrency(
-                                          item.price * item.quantity
-                                        )}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="border-t border-gray-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
-                                  <span>Total:</span>
-                                  <span className="text-blue-600">
-                                    {formatCurrency(order.totalPrice)}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap gap-2">
-                                {status === "pending" && (
-                                  <button
-                                    onClick={() =>
-                                      updateOrderStatus(order.id, "processing")
-                                    }
-                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-semibold text-sm"
-                                  >
-                                    Preparar
-                                  </button>
-                                )}
-                                {status === "processing" && (
-                                  <button
-                                    onClick={() =>
-                                      updateOrderStatus(order.id, "completed")
-                                    }
-                                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold text-sm"
-                                  >
-                                    Entregar
-                                  </button>
-                                )}
-                                {status === "completed" && (
-                                  <button
-                                    onClick={() =>
-                                      updateOrderStatus(order.id, "archived")
-                                    }
-                                    className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition font-semibold text-sm"
-                                  >
-                                    Archivar
-                                  </button>
-                                )}
+                                <p className="text-sm text-gray-700">
+                                  <span className="font-semibold">Fecha:</span>{' '}
+                                  {new Date(order.createdAt).toLocaleDateString('es-CO')}
+                                </p>
                               </div>
                             </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
+        
+                            <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                              <p className="text-xs text-gray-600 font-semibold mb-2">ARTÍCULOS</p>
+                              <div className="space-y-1">
+                                {order.items.map((item, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="flex justify-between text-sm text-gray-700"
+                                  >
+                                    <span>
+                                      {item.name} x{item.quantity}
+                                    </span>
+                                    <span className="font-semibold">
+                                      {formatCurrency(item.price * item.quantity)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="border-t border-gray-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
+                                <span>Total:</span>
+                                <span className="text-blue-600">
+                                  {formatCurrency(order.totalPrice)}
+                                </span>
+                              </div>
+                            </div>
+        
+                            <div className="flex flex-wrap gap-2">
+                              {status === 'pending' && (
+                                <button
+                                  onClick={() => updateOrderStatus(order.id, 'processing')}
+                                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-semibold text-sm"
+                                >
+                                  Preparar
+                                </button>
+                              )}
+                              {status === 'processing' && (
+                                <button
+                                  onClick={() => updateOrderStatus(order.id, 'completed')}
+                                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold text-sm"
+                                >
+                                  Entregar
+                                </button>
+                              )}
+                              {status === 'completed' && (
+                                <button
+                                  onClick={() => updateOrderStatus(order.id, 'archived')}
+                                  className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition font-semibold text-sm"
+                                >
+                                  Archivar
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
-              )
-            )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -1874,9 +1984,13 @@ export default function TuzDiazDulcez() {
                     </label>
                     <select
                       value={selectedMonth}
-                      onChange={(e) =>
-                        setSelectedMonth(parseInt(e.target.value))
-                      }
+                      onChange={async (e) => {
+                        const newMonth = parseInt(e.target.value);
+                        setSelectedMonth(newMonth);
+                        // Recargar estadísticas
+                        const data = await api.getStatistics(newMonth, selectedYear);
+                        if (data) setStatistics(data);
+                      }}
                       className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       {Array.from({ length: 12 }, (_, i) => (
@@ -1894,9 +2008,13 @@ export default function TuzDiazDulcez() {
                     </label>
                     <select
                       value={selectedYear}
-                      onChange={(e) =>
-                        setSelectedYear(parseInt(e.target.value))
-                      }
+                      onChange={async (e) => {
+                        const newYear = parseInt(e.target.value);
+                        setSelectedYear(newYear);
+                        // Recargar estadísticas
+                        const data = await api.getStatistics(selectedMonth, newYear);
+                        if (data) setStatistics(data);
+                      }}
                       className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       {Array.from({ length: 5 }, (_, i) => {

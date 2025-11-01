@@ -13,16 +13,47 @@ export const api = {
     const response = await fetch(`${API_URL}/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user)
+      body: JSON.stringify(user),
     });
     return response.json();
   },
 
+  // Actualizar estado de usuario
+  async updateUserStatus(id: string, status: 'approved' | 'rejected' | 'pending') {
+    const response = await fetch(`${API_URL}/users`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status }),
+    });
+    return response.json();
+  },
+
+  // Borrar usuario (cascade = borrar pedidos también)
+  async deleteUser(id: string, cascade: boolean) {
+    const response = await fetch(`${API_URL}/users`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, cascade }),
+    });
+    return response.json();
+  },
+
+  // Rotar contraseña admin (servidor genera y envía por email)
+  async rotateAdminPassword(currentPassword: string) {
+    const response = await fetch(`${API_URL}/admin-rotate-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword }),
+    });
+    return response.json();
+  },
+
+  // (Compat) Aprobar usuario usando el nuevo endpoint (envía status)
   async approveUser(id: string) {
     const response = await fetch(`${API_URL}/users`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id })
+      body: JSON.stringify({ id, status: 'approved' }),
     });
     return response.json();
   },
@@ -40,7 +71,7 @@ export const api = {
     const response = await fetch(`${API_URL}/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(order)
+      body: JSON.stringify(order),
     });
     return response.json();
   },
@@ -49,7 +80,7 @@ export const api = {
     const response = await fetch(`${API_URL}/orders`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status })
+      body: JSON.stringify({ id, status }),
     });
     return response.json();
   },
@@ -64,7 +95,7 @@ export const api = {
     const response = await fetch(`${API_URL}/admin-auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
+      body: JSON.stringify({ password }),
     });
     return response.json();
   },
@@ -73,7 +104,7 @@ export const api = {
     const response = await fetch(`${API_URL}/statistics`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
     });
     return response.json();
   },
