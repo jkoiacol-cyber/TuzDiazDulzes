@@ -1,6 +1,8 @@
 const { pool, setupDatabase } = require('./db-setup');
 
 exports.handler = async (event, context) => {
+  console.log('=== STATISTICS FUNCTION STARTED ===');
+  
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -11,10 +13,10 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, headers, body: '' };
   }
 
-  await setupDatabase();
-
   try {
+    await setupDatabase();
     const method = event.httpMethod;
+    console.log('Method:', method);
     
     // GET - Obtener estadísticas
     if (method === 'GET') {
@@ -31,6 +33,8 @@ exports.handler = async (event, context) => {
       query += ' ORDER BY year DESC, month DESC';
       
       const result = await pool.query(query, params);
+      console.log('Statistics found:', result.rows.length);
+      
       return {
         statusCode: 200,
         headers,
@@ -41,6 +45,8 @@ exports.handler = async (event, context) => {
     // POST - Crear o actualizar estadísticas
     if (method === 'POST') {
       const { month, year, totalOrders, totalUnits, totalPrice, items } = JSON.parse(event.body);
+      
+      console.log('Updating statistics:', { month, year, totalOrders, totalUnits, totalPrice });
       
       // Intentar actualizar primero
       const updateResult = await pool.query(
@@ -55,6 +61,7 @@ exports.handler = async (event, context) => {
       );
       
       if (updateResult.rowCount > 0) {
+        console.log('Statistics updated');
         return {
           statusCode: 200,
           headers,
@@ -69,6 +76,7 @@ exports.handler = async (event, context) => {
         [month, year, totalOrders, totalUnits, totalPrice, JSON.stringify(items)]
       );
       
+      console.log('Statistics created');
       return {
         statusCode: 201,
         headers,
@@ -79,4 +87,17 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 405,
       headers,
-      body: JSON.stringify({ error: 
+      body: JSON.stringify({ error: 'Method not allowed' })
+    };
+
+  } catch (error) {
+    console.error('=== STATISTICS ERROR ===');
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: error.message })
+    };
+  }
+};
