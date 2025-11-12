@@ -50,12 +50,88 @@ interface Statistics {
 
 // Helper function to format currency consistently
 const formatCurrency = (value: number): string => {
-  return new Intl.NumberFormat("es-CO", {
+  return new Intl.NumberFormat("es-CL", {
     style: "currency",
-    currency: "COP",
+    currency: "CLP",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
+};
+
+// Helper functions para formatear fechas en zona horaria de Chile
+const formatChileDateTime = (dateString: string) => {
+  const date = new Date(dateString);
+  
+  const dateFormatted = date.toLocaleDateString('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'America/Santiago'
+  });
+  
+  const timeFormatted = date.toLocaleTimeString('es-CL', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/Santiago'
+  });
+  
+  return { dateFormatted, timeFormatted };
+};
+
+const formatChileDateTimeFull = (dateString: string) => {
+  const date = new Date(dateString);
+  
+  const dateFormatted = date.toLocaleDateString('es-CL', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'America/Santiago'
+  });
+  
+  const timeFormatted = date.toLocaleTimeString('es-CL', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+    timeZone: 'America/Santiago'
+  });
+  
+  return { dateFormatted, timeFormatted };
+};
+
+// 🆕 Helper para calcular días hábiles (FUERA de formatChileDateTimeFull)
+const isWeekday = (date: Date): boolean => {
+  const day = date.getDay();
+  return day !== 0 && day !== 6; // No es domingo ni sábado
+};
+
+const calculateBusinessDays = (startDate: Date, endDate: Date): number => {
+  let count = 0;
+  const current = new Date(startDate);
+  
+  while (current <= endDate) {
+    if (isWeekday(current)) {
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+  
+  return count;
+};
+
+const addBusinessDays = (date: Date, days: number): Date => {
+  let count = 0;
+  const result = new Date(date);
+  
+  while (count < days) {
+    result.setDate(result.getDate() + 1);
+    if (isWeekday(result)) {
+      count++;
+    }
+  }
+  
+  return result;
 };
 
 export default function TuzDiazDulcez() {
@@ -63,8 +139,6 @@ export default function TuzDiazDulcez() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [adminPasswordInput, setAdminPasswordInput] = useState("");
-  const [adminSecurityMsg, setAdminSecurityMsg] = useState('');
-  const [isRotatingPassword, setIsRotatingPassword] = useState(false);
   const [adminLoginAttempt, setAdminLoginAttempt] = useState(false);
   const [currentTab, setCurrentTab] = useState<"cart" | "register" | "orders">(
     "cart"
@@ -110,6 +184,7 @@ export default function TuzDiazDulcez() {
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [adminTokenExpiry, setAdminTokenExpiry] = useState<number | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showArchivedOrders, setShowArchivedOrders] = useState(false);
 
   // Available products con imágenes
   const products = [
@@ -357,6 +432,42 @@ export default function TuzDiazDulcez() {
     }
   }, [isClient]);
 
+  // Cerrar dropdowns al hacer clic fuera
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+      if (!target.closest('[id^="delete-dropdown-"]') && !target.closest('button')) {
+        const allDropdowns = document.querySelectorAll('[id^="delete-dropdown-"]');
+        allDropdowns.forEach(d => d.classList.add('hidden'));
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [isAdmin]);
+
+  // 🆕 Recargar estadísticas cuando cambia mes/año o cuando se actualiza un pedido
+  useEffect(() => {
+    if (!isClient || !isAdmin || adminTab !== 'statistics') return;
+    
+    const loadStatistics = async () => {
+      try {
+        console.log('📊 Recargando estadísticas...', { month: selectedMonth, year: selectedYear });
+        const data = await api.getStatistics(selectedMonth, selectedYear);
+        if (data) {
+          setStatistics(data);
+          console.log('✅ Estadísticas actualizadas:', data);
+        }
+      } catch (error) {
+        console.error('Error loading statistics:', error);
+      }
+    };
+  
+  loadStatistics();
+}, [isClient, isAdmin, adminTab, selectedMonth, selectedYear, orders]);
+
 
   // Modificar handleRegisterUser para usar API
   const handleRegisterUser = async () => {
@@ -558,15 +669,15 @@ export default function TuzDiazDulcez() {
       console.error('Error fetching from API, using local storage:', error);
       
       // Fallback a localStorage
-      const twelveMonthsAgo = new Date();
-      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      const oneMonthAgo = new Date();
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
 
       const userOrdersList = orders.filter((o) => {
         const orderDate = new Date(o.createdAt);
         return (
           o.userPhone === userOrdersPhone &&
-          (o.status !== "archived" ||
-            (o.status === "archived" && orderDate >= twelveMonthsAgo))
+          (o.status !== "archived" && o.status !== "archived_hidden" ||
+            ((o.status === "archived" || o.status === "archived_hidden") && orderDate >= oneMonthAgo))
         );
       });
 
@@ -710,42 +821,37 @@ export default function TuzDiazDulcez() {
     const ok = confirm(
       cascade
         ? '¿Borrar usuario y TODOS sus pedidos? Esta acción no se puede deshacer.'
-        : '¿Borrar solo el usuario? Los pedidos quedarán tal cual.'
+        : '¿Borrar solo el usuario? Se borrarán sus pedidos pendientes/en preparación. Los completados quedarán como "huérfanos".'
     );
     if (!ok) return;
 
-    try {
+      try {
       await api.deleteUser(userId, cascade);
-      const refreshed = await api.getUsers();
-      setUsers(refreshed);
-    } catch (e) {
-      console.error('Error deleting user:', e);
-      alert('No se pudo borrar el usuario');
-    }
-  };
 
-  // Rotate admin password (server generates and emails it)
-  const rotatePassword = async () => {
-    setAdminSecurityMsg('');
-    if (!adminPasswordInput) {
-      setAdminSecurityMsg('Ingresa tu contraseña actual para confirmar');
-      return;
-    }
+      // Recargar usuarios
+      const refreshedUsers = await api.getUsers();
+      setUsers(refreshedUsers);
 
-    setIsRotatingPassword(true);
-    try {
-      const res = await api.rotateAdminPassword(adminPasswordInput);
-      if (res?.success) {
-        setAdminSecurityMsg('Nueva contraseña generada y enviada por email.');
-        setAdminPasswordInput('');
-      } else {
-        setAdminSecurityMsg('Error: ' + (res?.error || 'No se pudo rotar la contraseña'));
+      // 🆕 Si se borraron pedidos (cascade), recargar la lista de pedidos también
+      if (cascade) {
+        const refreshedOrders = await api.getOrders();
+        setOrders(refreshedOrders);
       }
+
+      // Cerrar el dropdown después de borrar
+      const dropdown = document.getElementById(`delete-dropdown-${userId}`);
+      dropdown?.classList.add('hidden');
+
+      alert('Usuario borrado exitosamente');
     } catch (e: any) {
-      console.error('Error rotating password:', e);
-      setAdminSecurityMsg('Error rotando contraseña');
-    } finally {
-      setIsRotatingPassword(false);
+      console.error('Error deleting user:', e);
+
+      // 🆕 Mensaje más específico según el error
+      if (e.message?.includes('foreign key') || e.message?.includes('violates')) {
+        alert('No se puede borrar este usuario porque tiene pedidos asociados. Usa la opción "Borrar usuario y sus pedidos" en su lugar.');
+      } else {
+        alert('No se pudo borrar el usuario: ' + e.message);
+      }
     }
   };
 
@@ -818,14 +924,23 @@ export default function TuzDiazDulcez() {
     let data: any[] = [];
 
     if (statisticsView === "total") {
-      data = stat.items.map((item) => ({
-        Artículo: item.name,
-        Cantidad: item.quantity,
-        Precio: item.price,
-        Cliente: item.userName || "N/A",
-      }));
+      // 🆕 Vista Total con fecha y hora
+      data = stat.items.map((item) => {
+        const { dateFormatted, timeFormatted } = item.orderDate 
+          ? formatChileDateTime(item.orderDate)
+          : { dateFormatted: 'N/A', timeFormatted: 'N/A' };
+
+        return {
+          Artículo: item.name,
+          Cantidad: item.quantity,
+          Precio: item.price,
+          Cliente: item.userName || "N/A",
+          Fecha: dateFormatted,
+          Hora: timeFormatted,
+        };
+      });
     } else {
-      // Group by user
+      // 🆕 Vista Por Usuario con fecha y hora
       const userGroups = stat.items.reduce((acc: any, item) => {
         const key = item.userName || "Sin usuario";
         if (!acc[key]) acc[key] = [];
@@ -838,20 +953,42 @@ export default function TuzDiazDulcez() {
           Artículo: `CLIENTE: ${userName}`,
           Cantidad: "",
           Precio: "",
+          Fecha: "",
+          Hora: "",
         });
+
         items.forEach((item: any) => {
+          const { dateFormatted, timeFormatted } = item.orderDate 
+            ? formatChileDateTime(item.orderDate)
+            : { dateFormatted: 'N/A', timeFormatted: 'N/A' };
+
           data.push({
             Artículo: `  ${item.name}`,
             Cantidad: item.quantity,
             Precio: item.price,
+            Fecha: dateFormatted,
+            Hora: timeFormatted,
           });
         });
+
         const userTotal = items.reduce(
           (sum: number, item: any) => sum + item.price,
           0
         );
-        data.push({ Artículo: `  Subtotal`, Cantidad: "", Precio: userTotal });
-        data.push({ Artículo: "", Cantidad: "", Precio: "" });
+        data.push({ 
+          Artículo: `  Subtotal`, 
+          Cantidad: "", 
+          Precio: userTotal,
+          Fecha: "",
+          Hora: "",
+        });
+        data.push({ 
+          Artículo: "", 
+          Cantidad: "", 
+          Precio: "",
+          Fecha: "",
+          Hora: "",
+        });
       });
     }
 
@@ -859,6 +996,8 @@ export default function TuzDiazDulcez() {
       Artículo: "TOTAL GENERAL",
       Cantidad: stat.totalUnits,
       Precio: stat.totalPrice,
+      Fecha: "",
+      Hora: "",
     });
 
     const worksheet = XLSX.utils.json_to_sheet(data);
@@ -924,9 +1063,12 @@ export default function TuzDiazDulcez() {
                 <div className="flex gap-3">
                   <button
                     onClick={handleAdminLogin}
-                    className="flex-1 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition active:scale-95"
+                    disabled={isLoggingIn}
+                    className={`flex-1 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg        transition active:scale-95 ${
+                      isLoggingIn ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
                   >
-                    Ingresar
+                    {isLoggingIn ? 'Ingresando...' : 'Ingresar'}
                   </button>
                   <button
                     onClick={() => {
@@ -938,21 +1080,40 @@ export default function TuzDiazDulcez() {
                     Cancelar
                   </button>
                 </div>
-                
-                {/* AGREGAR ESTA SECCIÓN */}
+
+                {/* 🆕 BOTÓN DE RECUPERACIÓN */}
                 <div className="border-t pt-4">
                   <button
-                    onClick={() => {
-                      const newPassword = prompt('Nueva contraseña de administrador:');
-                      if (newPassword && newPassword.trim()) {
-                        localStorage.setItem('adminPassword', newPassword);
-                        setAdminPassword(newPassword);
-                        alert('Contraseña actualizada correctamente');
+                    onClick={async () => {
+                      const confirm = window.confirm(
+                        '¿Resetear contraseña de administrador?\n\n' +
+                        'Se generará una nueva contraseña y se enviará por email al administrador y desarrollador.\n\n' +
+                        '⚠️ La contraseña actual dejará de funcionar.'
+                      );
+
+                      if (!confirm) return;
+
+                      try {
+                        const result = await api.resetAdminPassword();
+
+                        if (result.success) {
+                          alert(
+                            '✅ Nueva contraseña generada exitosamente.\n\n' +
+                            result.message + '\n\n' +
+                            'Revisa tu correo electrónico.'
+                          );
+                          setAdminPasswordInput('');
+                        } else {
+                          alert('❌ Error: ' + (result.error || 'No se pudo resetear la contraseña'));
+                        }
+                      } catch (error: any) {
+                        console.error('Error resetting password:', error);
+                        alert('❌ Error al resetear contraseña: ' + error.message);
                       }
                     }}
-                    className="w-full text-sm text-gray-600 hover:text-purple-600 transition"
+                    className="w-full text-sm text-purple-600 hover:text-purple-800 hover:underline transition"
                   >
-                    ¿Olvidaste tu contraseña? Click aquí
+                    🔑 ¿Olvidaste tu contraseña?
                   </button>
                 </div>
               </div>
@@ -1410,7 +1571,7 @@ export default function TuzDiazDulcez() {
             <div className="bg-white rounded-xl shadow-lg p-6 md:p-8 max-w-4xl mx-auto">
             <h2 className="text-2xl md:text-3xl font-bold text-gray-800 mb-6">Seguimiento de Pedidos</h2>
             <p className="text-sm text-gray-600 mb-4">
-              Puedes consultar todos tus pedidos activos y los archivados de los últimos 12 meses.
+              Puedes consultar todos tus pedidos activos y los archivados del último mes.
             </p>
 
               {!showOrderTracking ? (
@@ -1465,15 +1626,14 @@ export default function TuzDiazDulcez() {
                         <div className="flex justify-between items-start mb-4">
                           <div>
                             <p className="text-sm text-gray-600">Pedido #{order.id}</p>
-                          <p className="text-xs text-gray-500">
-                            {new Date(order.createdAt).toLocaleDateString(
-                              "es-CO"
-                            )}{" "}
-                            -{" "}
-                            {new Date(order.createdAt).toLocaleTimeString(
-                              "es-CO"
-                            )}
-                          </p>
+                          {(() => {
+                            const { dateFormatted, timeFormatted } = formatChileDateTime(order.createdAt);
+                            return (
+                              <p className="text-xs text-gray-500">
+                                📅 {dateFormatted} • 🕐 {timeFormatted}
+                              </p>
+                            );
+                          })()}
                         </div>
                         <div
                           className={`px-3 py-1 rounded-full text-xs font-bold ${
@@ -1751,25 +1911,44 @@ export default function TuzDiazDulcez() {
         
                               {/* Borrar */}
                               <div className="relative inline-block">
-                                <details>
-                                  <summary className="bg-gray-600 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition text-sm        cursor-pointer list-none">
-                                    Borrar
-                                  </summary>
-                                  <div className="absolute right-0 mt-2 w-60 bg-white border rounded shadow text-left z-10">
-                                    <button
-                                      onClick={() => deleteUserFrontend(user.id, false)}
-                                      className="block w-full px-4 py-2 hover:bg-gray-50 text-sm"
-                                    >
-                                      Borrar solo usuario
-                                    </button>
-                                    <button
-                                      onClick={() => deleteUserFrontend(user.id, true)}
-                                      className="block w-full px-4 py-2 hover:bg-gray-50 text-sm text-red-600"
-                                    >
-                                      Borrar usuario y sus pedidos
-                                    </button>
-                                  </div>
-                                </details>
+                                <button
+                                  onClick={() => {
+                                    const dropdown = document.getElementById(`delete-dropdown-${user.id}`);
+                                    const allDropdowns = document.querySelectorAll('[id^="delete-dropdown-"]');
+                                    allDropdowns.forEach(d => {
+                                      if (d.id !== `delete-dropdown-${user.id}`) {
+                                        d.classList.add('hidden');
+                                      }
+                                    });
+                                    dropdown?.classList.toggle('hidden');
+                                  }}
+                                  className="bg-gray-600 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition text-sm"
+                                >
+                                  Borrar ▼
+                                </button>
+                                <div
+                                  id={`delete-dropdown-${user.id}`}
+                                  className="hidden absolute right-0 mt-2 w-60 bg-white border rounded shadow text-left z-10"
+                                >
+                                  <button
+                                    onClick={() => {
+                                      deleteUserFrontend(user.id, false);
+                                      document.getElementById(`delete-dropdown-${user.id}`)?.classList.add('hidden');
+                                    }}
+                                    className="block w-full px-4 py-2 hover:bg-gray-50 text-sm text-left"
+                                  >
+                                    Borrar solo usuario
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      deleteUserFrontend(user.id, true);
+                                      document.getElementById(`delete-dropdown-${user.id}`)?.classList.add('hidden');
+                                    }}
+                                    className="block w-full px-4 py-2 hover:bg-gray-50 text-sm text-red-600 text-left"
+                                  >
+                                    Borrar usuario y sus pedidos
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -1779,34 +1958,88 @@ export default function TuzDiazDulcez() {
                   </tbody>
                 </table>
               </div>
-        
-              {/* Seguridad: rotar contraseña del administrador */}
+
+              {/* Seguridad: cambiar contraseña del administrador */}
               <div className="mt-6 bg-white rounded-xl shadow-lg p-6">
-                <h3 className="font-bold text-lg mb-2">Seguridad</h3>
+                <h3 className="font-bold text-lg mb-2">🔐 Cambiar Contraseña</h3>
                 <p className="text-sm text-gray-600 mb-4">
-                  Genera una nueva contraseña de administrador (se enviará por email al administrador y al desarrollador).
+                  Cambia tu contraseña de administrador por una que recuerdes fácilmente.
                 </p>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="password"
-                    placeholder="Contraseña actual"
-                    value={adminPasswordInput}
-                    onChange={e => setAdminPasswordInput(e.target.value)}
-                    className="border rounded px-3 py-2 flex-1"
-                  />
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Contraseña Actual
+                    </label>
+                    <input
+                      type="password"
+                      id="currentPassword"
+                      className="border rounded px-3 py-2 w-full"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Nueva Contraseña (mínimo 8 caracteres)
+                    </label>
+                    <input
+                      type="password"
+                      id="newPassword"
+                      className="border rounded px-3 py-2 w-full"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Confirmar Nueva Contraseña
+                    </label>
+                    <input
+                      type="password"
+                      id="confirmPassword"
+                      className="border rounded px-3 py-2 w-full"
+                      placeholder="••••••••"
+                    />
+                  </div>
                   <button
-                    onClick={rotatePassword}
-                    disabled={isRotatingPassword}
-                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition disabled:opacity-60"
+                    onClick={async () => {
+                      const current = (document.getElementById('currentPassword') as HTMLInputElement)?.value;
+                      const newPass = (document.getElementById('newPassword') as HTMLInputElement)?.value;
+                      const confirm = (document.getElementById('confirmPassword') as HTMLInputElement)?.value;
+                    
+                      if (!current || !newPass || !confirm) {
+                        alert('Por favor completa todos los campos');
+                        return;
+                      }
+                    
+                      if (newPass !== confirm) {
+                        alert('Las contraseñas nuevas no coinciden');
+                        return;
+                      }
+                    
+                      if (newPass.length < 8) {
+                        alert('La nueva contraseña debe tener al menos 8 caracteres');
+                        return;
+                      }
+                    
+                      try {
+                        const result = await api.changeAdminPassword(current, newPass);
+                        
+                        if (result.success) {
+                          alert('✅ Contraseña actualizada exitosamente');
+                          // Limpiar campos
+                          (document.getElementById('currentPassword') as HTMLInputElement).value = '';
+                          (document.getElementById('newPassword') as HTMLInputElement).value = '';
+                          (document.getElementById('confirmPassword') as HTMLInputElement).value = '';
+                        }
+                      } catch (error: any) {
+                        console.error('Error:', error);
+                        alert('❌ Error: ' + error.message);
+                      }
+                    }}
+                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition w-full"
                   >
-                    {isRotatingPassword ? 'Rotando...' : 'Rotar'}
+                    Cambiar Contraseña
                   </button>
                 </div>
-                {adminSecurityMsg && (
-                  <p className="text-sm mt-3">
-                    {adminSecurityMsg}
-                  </p>
-                )}
               </div>
         
             </div>
@@ -1816,106 +2049,388 @@ export default function TuzDiazDulcez() {
         {/* Orders Tab */}
         {adminTab === 'orders' && (
           <div className="space-y-6">
-            {['pending', 'processing', 'completed', 'archived'].map((status) => (
-              <div key={status} className="bg-white rounded-xl shadow-lg overflow-hidden">
-                <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 md:p-6">
-                  <h3 className="text-lg md:text-xl font-bold capitalize">
-                    {status === 'pending' && '⏳ Pedidos Pendientes'}
-                    {status === 'processing' && '🔄 En Preparación'}
-                    {status === 'completed' && '✅ Completados'}
-                    {status === 'archived' && '📦 Archivados'}
-                  </h3>
-                </div>
-        
+            {/* Pedidos Pendientes */}
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden border-l-4 border-yellow-500">
+              <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white p-4 md:p-6">
+                <h3 className="text-lg md:text-xl font-bold">
+                  ⏳ Pedidos Pendientes
+                </h3>
+              </div>
+            
+              <div className="p-4 md:p-6">
+                {orders.filter((o) => o.status === 'pending').length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">No hay pedidos pendientes</p>
+                ) : (
+                  <div className="space-y-4">
+                    {orders
+                      .filter((o) => o.status === 'pending')
+                      .map((order) => (
+                        <div
+                          key={order.id}
+                          className="border border-yellow-200 rounded-lg p-4 hover:shadow-lg transition bg-yellow-50"
+                        >
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <p className="text-xs text-gray-600 font-semibold">CLIENTE</p>
+                              <p className="font-bold text-gray-800">{order.userName}</p>
+                              <p className="text-sm text-gray-700">{order.userPhone}</p>
+                              <p className="text-sm text-gray-700">{order.userAddress}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-600 font-semibold">DETALLES</p>
+                              <p className="text-sm text-gray-700">
+                                <span className="font-semibold">Pedido ID:</span> {order.id}
+                              </p>
+                              {(() => {
+                                const { dateFormatted, timeFormatted } = formatChileDateTimeFull(order.createdAt);
+                                return (
+                                  <>
+                                    <p className="text-sm text-gray-700">
+                                      <span className="font-semibold">Fecha:</span> {dateFormatted}
+                                    </p>
+                                    <p className="text-sm text-gray-700">
+                                      <span className="font-semibold">Hora:</span> {timeFormatted}
+                                    </p>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        
+                          <div className="bg-white rounded-lg p-3 mb-4 border border-yellow-200">
+                            <p className="text-xs text-gray-600 font-semibold mb-2">ARTÍCULOS</p>
+                            <div className="space-y-1">
+                              {order.items.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex justify-between text-sm text-gray-700"
+                                >
+                                  <span>
+                                    {item.name} x{item.quantity}
+                                  </span>
+                                  <span className="font-semibold">
+                                    {formatCurrency(item.price * item.quantity)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="border-t border-yellow-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
+                              <span>Total:</span>
+                              <span className="text-yellow-600">
+                                {formatCurrency(order.totalPrice)}
+                              </span>
+                            </div>
+                          </div>
+                        
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => updateOrderStatus(order.id, 'processing')}
+                              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-semibold text-sm"
+                            >
+                              ▶ Preparar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          
+            {/* Pedidos en Preparación */}
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden border-l-4 border-blue-500">
+              <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 md:p-6">
+                <h3 className="text-lg md:text-xl font-bold">
+                  🔄 En Preparación
+                </h3>
+              </div>
+            
+              <div className="p-4 md:p-6">
+                {orders.filter((o) => o.status === 'processing').length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">No hay pedidos en preparación</p>
+                ) : (
+                  <div className="space-y-4">
+                    {orders
+                      .filter((o) => o.status === 'processing')
+                      .map((order) => (
+                        <div
+                          key={order.id}
+                          className="border border-blue-200 rounded-lg p-4 hover:shadow-lg transition bg-blue-50"
+                        >
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <p className="text-xs text-gray-600 font-semibold">CLIENTE</p>
+                              <p className="font-bold text-gray-800">{order.userName}</p>
+                              <p className="text-sm text-gray-700">{order.userPhone}</p>
+                              <p className="text-sm text-gray-700">{order.userAddress}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-600 font-semibold">DETALLES</p>
+                              <p className="text-sm text-gray-700">
+                                <span className="font-semibold">Pedido ID:</span> {order.id}
+                              </p>
+                              {(() => {
+                                const { dateFormatted, timeFormatted } = formatChileDateTimeFull(order.createdAt);
+                                return (
+                                  <>
+                                    <p className="text-sm text-gray-700">
+                                      <span className="font-semibold">Fecha:</span> {dateFormatted}
+                                    </p>
+                                    <p className="text-sm text-gray-700">
+                                      <span className="font-semibold">Hora:</span> {timeFormatted}
+                                    </p>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        
+                          <div className="bg-white rounded-lg p-3 mb-4 border border-blue-200">
+                            <p className="text-xs text-gray-600 font-semibold mb-2">ARTÍCULOS</p>
+                            <div className="space-y-1">
+                              {order.items.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex justify-between text-sm text-gray-700"
+                                >
+                                  <span>
+                                    {item.name} x{item.quantity}
+                                  </span>
+                                  <span className="font-semibold">
+                                    {formatCurrency(item.price * item.quantity)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="border-t border-blue-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
+                              <span>Total:</span>
+                              <span className="text-blue-600">
+                                {formatCurrency(order.totalPrice)}
+                              </span>
+                            </div>
+                          </div>
+                        
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => updateOrderStatus(order.id, 'completed')}
+                              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold text-sm"
+                            >
+                              ✓ Entregar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          
+            {/* Pedidos Completados */}
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden border-l-4 border-green-500">
+              <div className="bg-gradient-to-r from-green-500 to-emerald-600 text-white p-4 md:p-6">
+                <h3 className="text-lg md:text-xl font-bold">
+                  ✅ Completados
+                </h3>
+              </div>
+            
+              <div className="p-4 md:p-6">
+                {orders.filter((o) => o.status === 'completed').length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">No hay pedidos completados</p>
+                ) : (
+                  <div className="space-y-4">
+                    {orders
+                      .filter((o) => o.status === 'completed')
+                      .map((order) => (
+                        <div
+                          key={order.id}
+                          className="border border-green-200 rounded-lg p-4 hover:shadow-lg transition bg-green-50"
+                        >
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <p className="text-xs text-gray-600 font-semibold">CLIENTE</p>
+                              <p className="font-bold text-gray-800">{order.userName}</p>
+                              <p className="text-sm text-gray-700">{order.userPhone}</p>
+                              <p className="text-sm text-gray-700">{order.userAddress}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-600 font-semibold">DETALLES</p>
+                              <p className="text-sm text-gray-700">
+                                <span className="font-semibold">Pedido ID:</span> {order.id}
+                              </p>
+                              {(() => {
+                                const { dateFormatted, timeFormatted } = formatChileDateTimeFull(order.createdAt);
+                                return (
+                                  <>
+                                    <p className="text-sm text-gray-700">
+                                      <span className="font-semibold">Fecha:</span> {dateFormatted}
+                                    </p>
+                                    <p className="text-sm text-gray-700">
+                                      <span className="font-semibold">Hora:</span> {timeFormatted}
+                                    </p>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        
+                          <div className="bg-white rounded-lg p-3 mb-4 border border-green-200">
+                            <p className="text-xs text-gray-600 font-semibold mb-2">ARTÍCULOS</p>
+                            <div className="space-y-1">
+                              {order.items.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex justify-between text-sm text-gray-700"
+                                >
+                                  <span>
+                                    {item.name} x{item.quantity}
+                                  </span>
+                                  <span className="font-semibold">
+                                    {formatCurrency(item.price * item.quantity)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="border-t border-green-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
+                              <span>Total:</span>
+                              <span className="text-green-600">
+                                {formatCurrency(order.totalPrice)}
+                              </span>
+                            </div>
+                          </div>
+                        
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => updateOrderStatus(order.id, 'archived')}
+                              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition font-semibold text-sm"
+                            >
+                              📦 Archivar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          
+            {/* Pedidos Archivados con Toggle */}
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden border-l-4 border-gray-500">
+              <div className="bg-gradient-to-r from-gray-500 to-gray-700 text-white p-4 md:p-6 flex justify-between items-center">
+                <h3 className="text-lg md:text-xl font-bold">
+                  📦 Archivados ({orders.filter((o) => o.status === 'archived').length})
+                </h3>
+                <button
+                  onClick={() => setShowArchivedOrders(!showArchivedOrders)}
+                  className="bg-white text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-100 transition font-semibold text-sm flex items-center gap-2"
+                >
+                  {showArchivedOrders ? (
+                    <>
+                      👁️‍🗨️ Ocultar
+                    </>
+                  ) : (
+                    <>
+                      👁️ Mostrar
+                    </>
+                  )}
+                </button>
+              </div>
+            
+              {showArchivedOrders && (
                 <div className="p-4 md:p-6">
-                  {orders.filter((o) => o.status === status).length === 0 ? (
-                    <p className="text-gray-500 text-center py-8">No hay pedidos en este estado</p>
+                  {orders.filter((o) => o.status === 'archived').length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">No hay pedidos archivados</p>
                   ) : (
                     <div className="space-y-4">
                       {orders
-                        .filter((o) => o.status === status)
-                        .map((order) => (
-                          <div
-                            key={order.id}
-                            className="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition"
-                          >
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                              <div>
-                                <p className="text-xs text-gray-600 font-semibold">CLIENTE</p>
-                                <p className="font-bold text-gray-800">{order.userName}</p>
-                                <p className="text-sm text-gray-700">{order.userPhone}</p>
-                                <p className="text-sm text-gray-700">{order.userAddress}</p>
-                              </div>
-                              <div>
-                                <p className="text-xs text-gray-600 font-semibold">DETALLES</p>
-                                <p className="text-sm text-gray-700">
-                                  <span className="font-semibold">Pedido ID:</span> {order.id}
-                                </p>
-                                <p className="text-sm text-gray-700">
-                                  <span className="font-semibold">Fecha:</span>{' '}
-                                  {new Date(order.createdAt).toLocaleDateString('es-CO')}
-                                </p>
-                              </div>
-                            </div>
-        
-                            <div className="bg-gray-50 rounded-lg p-3 mb-4">
-                              <p className="text-xs text-gray-600 font-semibold mb-2">ARTÍCULOS</p>
-                              <div className="space-y-1">
-                                {order.items.map((item, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="flex justify-between text-sm text-gray-700"
-                                  >
-                                    <span>
-                                      {item.name} x{item.quantity}
-                                    </span>
-                                    <span className="font-semibold">
-                                      {formatCurrency(item.price * item.quantity)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="border-t border-gray-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
-                                <span>Total:</span>
-                                <span className="text-blue-600">
-                                  {formatCurrency(order.totalPrice)}
+                        .filter((o) => o.status === 'archived')
+                        .map((order) => {
+                          // 🆕 Calcular días hábiles restantes
+                          const archivedDate = new Date(order.createdAt);
+                          const now = new Date();
+                          const businessDaysPassed = calculateBusinessDays(archivedDate, now);
+                          const daysRemaining = Math.max(0, 3 - businessDaysPassed);
+                          
+                          return (
+                            <div
+                              key={order.id}
+                              className="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition bg-gray-50 opacity-75"
+                            >
+                              {/* 🆕 Badge con días hábiles restantes */}
+                              <div className="flex justify-between items-start mb-2">
+                                <span className={`text-xs font-bold px-2 py-1 rounded ${
+                                  daysRemaining === 0
+                                    ? 'bg-red-100 text-red-800' 
+                                    : daysRemaining === 1
+                                    ? 'bg-yellow-100 text-yellow-800'
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {daysRemaining === 0
+                                    ? '🔥 Se ocultará pronto' 
+                                    : `⏱️ ${daysRemaining} día${daysRemaining !== 1 ? 's' : ''} hábil${daysRemaining !== 1 ? 'es' : ''} restante${daysRemaining !== 1 ? 's' : ''}`
+                                  }
                                 </span>
                               </div>
+                                
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div>
+                                  <p className="text-xs text-gray-600 font-semibold">CLIENTE</p>
+                                  <p className="font-bold text-gray-800">{order.userName}</p>
+                                  <p className="text-sm text-gray-700">{order.userPhone}</p>
+                                  <p className="text-sm text-gray-700">{order.userAddress}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-600 font-semibold">DETALLES</p>
+                                  <p className="text-sm text-gray-700">
+                                    <span className="font-semibold">Pedido ID:</span> {order.id}
+                                  </p>
+                                  {(() => {
+                                    const { dateFormatted, timeFormatted } = formatChileDateTimeFull(order.createdAt);
+                                    return (
+                                      <>
+                                        <p className="text-sm text-gray-700">
+                                          <span className="font-semibold">Fecha:</span> {dateFormatted}
+                                        </p>
+                                        <p className="text-sm text-gray-700">
+                                          <span className="font-semibold">Hora:</span> {timeFormatted}
+                                        </p>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              </div>
+                                
+                              <div className="bg-white rounded-lg p-3 mb-4 border border-gray-200">
+                                <p className="text-xs text-gray-600 font-semibold mb-2">ARTÍCULOS</p>
+                                <div className="space-y-1">
+                                  {order.items.map((item, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex justify-between text-sm text-gray-700"
+                                    >
+                                      <span>
+                                        {item.name} x{item.quantity}
+                                      </span>
+                                      <span className="font-semibold">
+                                        {formatCurrency(item.price * item.quantity)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="border-t border-gray-300 mt-2 pt-2 flex justify-between font-bold text-gray-800">
+                                  <span>Total:</span>
+                                  <span className="text-gray-600">
+                                    {formatCurrency(order.totalPrice)}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-        
-                            <div className="flex flex-wrap gap-2">
-                              {status === 'pending' && (
-                                <button
-                                  onClick={() => updateOrderStatus(order.id, 'processing')}
-                                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-semibold text-sm"
-                                >
-                                  Preparar
-                                </button>
-                              )}
-                              {status === 'processing' && (
-                                <button
-                                  onClick={() => updateOrderStatus(order.id, 'completed')}
-                                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold text-sm"
-                                >
-                                  Entregar
-                                </button>
-                              )}
-                              {status === 'completed' && (
-                                <button
-                                  onClick={() => updateOrderStatus(order.id, 'archived')}
-                                  className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition font-semibold text-sm"
-                                >
-                                  Archivar
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
         )}
 
@@ -1984,18 +2499,14 @@ export default function TuzDiazDulcez() {
                     </label>
                     <select
                       value={selectedMonth}
-                      onChange={async (e) => {
-                        const newMonth = parseInt(e.target.value);
-                        setSelectedMonth(newMonth);
-                        // Recargar estadísticas
-                        const data = await api.getStatistics(newMonth, selectedYear);
-                        if (data) setStatistics(data);
+                      onChange={(e) => {
+                        setSelectedMonth(parseInt(e.target.value));
                       }}
                       className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       {Array.from({ length: 12 }, (_, i) => (
                         <option key={i + 1} value={i + 1}>
-                          {new Date(2024, i).toLocaleString("es-CO", {
+                          {new Date(2024, i).toLocaleString("es-CL", {
                             month: "long",
                           })}
                         </option>
@@ -2008,12 +2519,8 @@ export default function TuzDiazDulcez() {
                     </label>
                     <select
                       value={selectedYear}
-                      onChange={async (e) => {
-                        const newYear = parseInt(e.target.value);
-                        setSelectedYear(newYear);
-                        // Recargar estadísticas
-                        const data = await api.getStatistics(selectedMonth, newYear);
-                        if (data) setStatistics(data);
+                      onChange={(e) => {
+                        setSelectedYear(parseInt(e.target.value));
                       }}
                       className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
@@ -2113,20 +2620,62 @@ export default function TuzDiazDulcez() {
                                             {formatCurrency(userTotal)}
                                           </span>
                                         </div>
-                                        <div className="space-y-1">
-                                          {items.map((item, idx) => (
-                                            <div
-                                              key={idx}
-                                              className="flex justify-between text-sm text-gray-600"
-                                            >
-                                              <span>
-                                                {item.name} x{item.quantity}
-                                              </span>
-                                              <span>
-                                                {formatCurrency(item.price)}
-                                              </span>
-                                            </div>
-                                          ))}
+                                        
+                                        {/* 🆕 Tabla con fecha y hora */}
+                                        <div className="overflow-x-auto">
+                                          <table className="w-full text-sm">
+                                            <thead className="bg-gray-50">
+                                              <tr>
+                                                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-600">
+                                                  Artículo
+                                                </th>
+                                                <th className="px-2 py-2 text-center text-xs font-semibold text-gray-600">
+                                                  Cant.
+                                                </th>
+                                                <th className="px-2 py-2 text-right text-xs font-semibold text-gray-600">
+                                                  Precio
+                                                </th>
+                                                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-600">
+                                                  Fecha
+                                                </th>
+                                                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-600">
+                                                  Hora
+                                                </th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {items.map((item: any, idx: number) => {
+                                                const { dateFormatted, timeFormatted } = item.orderDate 
+                                                  ? formatChileDateTime(item.orderDate)
+                                                  : { dateFormatted: 'N/A', timeFormatted: 'N/A' };
+                                                
+                                                return (
+                                                  <tr key={idx} className="border-b border-gray-100">
+                                                    <td className="px-2 py-2 text-gray-700">
+                                                      {item.name}
+                                                    </td>
+                                                    <td className="px-2 py-2 text-center text-gray-700">
+                                                      {item.quantity}
+                                                    </td>
+                                                    <td className="px-2 py-2 text-right text-gray-700">
+                                                      {formatCurrency(item.price)}
+                                                    </td>
+                                                    <td className="px-2 py-2 text-gray-600 text-xs">
+                                                      {dateFormatted}
+                                                    </td>
+                                                    <td className="px-2 py-2 text-gray-600 text-xs">
+                                                      {timeFormatted}
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                        
+                                        <div className="mt-2 pt-2 border-t flex justify-between font-semibold text-gray-800">
+                                          <span>Subtotal</span>
+                                          <span>{formatCurrency(userTotal)}</span>
                                         </div>
                                       </div>
                                     );
@@ -2151,28 +2700,46 @@ export default function TuzDiazDulcez() {
                                     <th className="px-4 py-3 text-left font-bold text-gray-700">
                                       Cliente
                                     </th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-700">
+                                      Fecha
+                                    </th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-700">
+                                      Hora
+                                    </th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {stat.items.map((item, idx) => (
-                                    <tr
-                                      key={idx}
-                                      className="border-b hover:bg-gray-50 transition"
-                                    >
-                                      <td className="px-4 py-4 font-semibold text-gray-800">
-                                        {item.name}
-                                      </td>
-                                      <td className="px-4 py-4 text-center text-gray-700">
-                                        {item.quantity}
-                                      </td>
-                                      <td className="px-4 py-4 text-right font-bold text-gray-800">
-                                        {formatCurrency(item.price)}
-                                      </td>
-                                      <td className="px-4 py-4 text-gray-700">
-                                        {item.userName || "N/A"}
-                                      </td>
-                                    </tr>
-                                  ))}
+                                  {stat.items.map((item, idx) => {
+                                    const { dateFormatted, timeFormatted } = item.orderDate 
+                                      ? formatChileDateTime(item.orderDate)
+                                      : { dateFormatted: 'N/A', timeFormatted: 'N/A' };
+                                    
+                                    return (
+                                      <tr
+                                        key={idx}
+                                        className="border-b hover:bg-gray-50 transition"
+                                      >
+                                        <td className="px-4 py-4 font-semibold text-gray-800">
+                                          {item.name}
+                                        </td>
+                                        <td className="px-4 py-4 text-center text-gray-700">
+                                          {item.quantity}
+                                        </td>
+                                        <td className="px-4 py-4 text-right font-bold text-gray-800">
+                                          {formatCurrency(item.price)}
+                                        </td>
+                                        <td className="px-4 py-4 text-gray-700">
+                                          {item.userName || "N/A"}
+                                        </td>
+                                        <td className="px-4 py-4 text-gray-700 text-sm">
+                                          {dateFormatted}
+                                        </td>
+                                        <td className="px-4 py-4 text-gray-700 text-sm">
+                                          {timeFormatted}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
@@ -2194,6 +2761,7 @@ export default function TuzDiazDulcez() {
                       No hay datos para este año
                     </p>
                   ) : (
+                    
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {statistics
                         .filter((s) => s.year === selectedYear)

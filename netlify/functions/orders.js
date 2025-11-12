@@ -1,4 +1,65 @@
+// netlify/functions/orders.js
 const { pool, setupDatabase } = require('./db-setup');
+
+// 🆕 Función para calcular días hábiles
+function isWeekday(date) {
+  const day = date.getDay();
+  return day !== 0 && day !== 6; // 0=Domingo, 6=Sábado
+}
+
+function addBusinessDays(date, days) {
+  let count = 0;
+  const result = new Date(date);
+  
+  while (count < days) {
+    result.setDate(result.getDate() + 1);
+    if (isWeekday(result)) {
+      count++;
+    }
+  }
+  
+  return result;
+}
+
+// 🆕 Función para marcar pedidos archivados como "ocultos" (NO los borra)
+async function hideOldArchivedOrders() {
+  try {
+    // Obtener todos los pedidos archivados
+    const archivedOrders = await pool.query(
+      `SELECT id, created_at, status 
+       FROM orders 
+       WHERE status = 'archived'`
+    );
+    
+    const now = new Date();
+    let hiddenCount = 0;
+    
+    for (const order of archivedOrders.rows) {
+      const archivedDate = new Date(order.created_at);
+      const threeBusinessDaysLater = addBusinessDays(archivedDate, 3);
+      
+      // Si ya pasaron 3 días hábiles, marcar como "archived_hidden"
+      if (now >= threeBusinessDaysLater) {
+        await pool.query(
+          `UPDATE orders 
+           SET status = 'archived_hidden' 
+           WHERE id = $1`,
+          [order.id]
+        );
+        hiddenCount++;
+      }
+    }
+    
+    if (hiddenCount > 0) {
+      console.log(`📦 ${hiddenCount} pedidos archivados ocultados (mantienen datos para estadísticas)`);
+    }
+    
+    return hiddenCount;
+  } catch (error) {
+    console.error('Error hiding old archived orders:', error.message);
+    return 0;
+  }
+}
 
 exports.handler = async (event, context) => {
   console.log('=== ORDER FUNCTION STARTED ===');
@@ -19,44 +80,48 @@ exports.handler = async (event, context) => {
     
     // GET - Obtener pedidos
     if (method === 'GET') {
+      // 🆕 Ocultar pedidos archivados antiguos (NO los borra)
+      await hideOldArchivedOrders();
+      
       const { phone } = event.queryStringParameters || {};
       
       let query = 'SELECT * FROM orders';
       const params = [];
       
-      if (phone) {
-        const twelveMonthsAgo = new Date();
-        twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
-        
-        query = `
-          SELECT * FROM orders 
-          WHERE user_phone = $1 
-          AND (status != 'archived' OR 
-               (status = 'archived' AND created_at >= $2))
-          ORDER BY created_at DESC
-        `;
-        params.push(phone, twelveMonthsAgo.toISOString());
-      } else {
-        query += ' ORDER BY created_at DESC';
+        if (phone) {
+          const oneMonthAgo = new Date();
+          oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+                
+          query = `
+            SELECT * FROM orders 
+            WHERE user_phone = $1 
+            AND (status != 'archived' AND status != 'archived_hidden' 
+                 OR ((status = 'archived' OR status = 'archived_hidden') 
+                     AND created_at >= $2))
+            ORDER BY created_at DESC
+          `;
+          params.push(phone, oneMonthAgo.toISOString());
+        }
+                
+        else {
+        // 🆕 Excluir archived_hidden del admin (pero siguen en BD para estadísticas)
+        query += ` WHERE status != 'archived_hidden' ORDER BY created_at DESC`;
       }
       
       const result = await pool.query(query, params);
       console.log('Orders found:', result.rows.length);
       
-      // MAPEO CRÍTICO: Convertir campos de BD a formato frontend
       const orders = result.rows.map(order => ({
         id: order.id,
         userId: order.user_id,
         userName: order.user_name,
         userPhone: order.user_phone,
         userAddress: order.user_address,
-        items: order.items, // Ya es JSONB
-        totalPrice: parseFloat(order.total_price), // ← CONVERTIR A NÚMERO
+        items: order.items,
+        totalPrice: parseFloat(order.total_price),
         status: order.status,
         createdAt: order.created_at
       }));
-      
-      console.log('Sample order:', orders[0]); // Ver un ejemplo
       
       return {
         statusCode: 200,
@@ -75,7 +140,6 @@ exports.handler = async (event, context) => {
         itemCount: order.items?.length
       });
       
-      // Asegurar que totalPrice es un número
       const totalPrice = parseFloat(order.totalPrice);
       
       if (isNaN(totalPrice)) {
@@ -97,14 +161,13 @@ exports.handler = async (event, context) => {
           order.userPhone, 
           order.userAddress, 
           JSON.stringify(order.items), 
-          totalPrice, // ← Usar el número parseado
+          totalPrice,
           order.status || 'pending'
         ]
       );
       
       console.log('Order created:', result.rows[0].id);
       
-      // Devolver con mapeo correcto
       const createdOrder = {
         id: result.rows[0].id,
         userId: result.rows[0].user_id,

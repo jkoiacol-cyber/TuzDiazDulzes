@@ -1,3 +1,4 @@
+// netlify/functions/statistics.js
 const { pool, setupDatabase } = require('./db-setup');
 
 exports.handler = async (event, context) => {
@@ -14,7 +15,6 @@ exports.handler = async (event, context) => {
   try {
     await setupDatabase();
     
-    // GET - Calcular estadísticas en tiempo real
     if (event.httpMethod === 'GET') {
       const { month, year } = event.queryStringParameters || {};
     
@@ -26,11 +26,14 @@ exports.handler = async (event, context) => {
         };
       }
     
+      // Obtener pedidos completed/archived/archived_hidden con fecha
       const ordersQuery = await pool.query(
-        `SELECT user_id, user_name, items, total_price 
+        `SELECT user_id, user_name, items, total_price, created_at, id
          FROM orders 
          WHERE EXTRACT(MONTH FROM created_at) = $1 
-           AND EXTRACT(YEAR FROM created_at) = $2`,
+           AND EXTRACT(YEAR FROM created_at) = $2
+           AND (status = 'completed' OR status = 'archived' OR status = 'archived_hidden')
+         ORDER BY created_at DESC`,
         [month, year]
       );
     
@@ -42,12 +45,9 @@ exports.handler = async (event, context) => {
         };
       }
     
-      // Totales
       let totalOrders = ordersQuery.rows.length;
       let totalUnits = 0;
       let totalPrice = 0;
-    
-      // Items por línea con cliente (NO agrupar por producto aquí)
       const lineItems = [];
     
       ordersQuery.rows.forEach(order => {
@@ -60,7 +60,9 @@ exports.handler = async (event, context) => {
             quantity: item.quantity,
             price: item.price * item.quantity,
             userId: order.user_id || null,
-            userName: order.user_name || null
+            userName: order.user_name || null,
+            orderId: order.id, // 🆕 ID del pedido
+            orderDate: order.created_at // 🆕 Fecha y hora del pedido
           });
         });
       });
@@ -75,9 +77,8 @@ exports.handler = async (event, context) => {
         items: lineItems
       }];
     
-      console.log('Calculated statistics:', {
-        month, year, totalOrders, totalUnits, totalPrice,
-        itemsSample: lineItems.slice(0, 2) // muestra 2 para no saturar logs
+      console.log('Calculated statistics with timestamps:', {
+        month, year, totalOrders, totalUnits, totalPrice
       });
     
       return {
@@ -87,7 +88,6 @@ exports.handler = async (event, context) => {
       };
     }
     
-    // POST - Ya no hace nada, se calcula en GET
     if (event.httpMethod === 'POST') {
       return {
         statusCode: 200,
